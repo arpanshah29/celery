@@ -93,6 +93,16 @@ class X(object):
         )
         _consumer.on_invalid_task = self.on_invalid_task
         _consumer.strategies = self.obj.strategies
+        self.obj.hub = hub
+        self.obj.task_consumer = self.consumer
+        self.obj.consumer = self.consumer
+        self.obj.connection = self.connection
+        self.obj.app.clock = self.clock
+        self.obj.qos = self.qos
+        self.obj.blueprint = self.blueprint
+        self.obj.amqheartbeat_rate = 2.0
+        self.obj.additional_task_consumers = []
+        self.obj.additional_connections = []
 
     def timeout_then_error(self, mock):
 
@@ -127,7 +137,7 @@ class X(object):
 def get_task_callback(*args, **kwargs):
     x = X(*args, **kwargs)
     x.blueprint.state = CLOSE
-    asynloop(*x.args)
+    asynloop(x.obj)
     return x, x.consumer.on_message
 
 
@@ -148,13 +158,13 @@ class test_asynloop:
         x.obj.restart_count = 0
         x.obj.pool.did_start_ok.return_value = False
         with pytest.raises(WorkerLostError):
-            asynloop(*x.args)
+            asynloop(x.obj)
 
     def test_setup_heartbeat(self):
         x = X(self.app, heartbeat=10)
         x.hub.timer.call_repeatedly = Mock(name='x.hub.call_repeatedly()')
         x.blueprint.state = CLOSE
-        asynloop(*x.args)
+        asynloop(x.obj)
         x.consumer.consume.assert_called_with()
         x.obj.on_ready.assert_called_with()
         x.hub.timer.call_repeatedly.assert_called_with(
@@ -213,7 +223,7 @@ class test_asynloop:
         state.should_terminate = True
         try:
             with pytest.raises(WorkerTerminate):
-                asynloop(*x.args)
+                asynloop(x.obj)
         finally:
             state.should_terminate = None
 
@@ -224,7 +234,7 @@ class test_asynloop:
         x.hub.close.side_effect = MemoryError()
         try:
             with pytest.raises(WorkerTerminate):
-                asynloop(*x.args)
+                asynloop(x.obj)
         finally:
             state.should_terminate = None
 
@@ -233,7 +243,7 @@ class test_asynloop:
         state.should_stop = 303
         try:
             with pytest.raises(WorkerShutdown):
-                asynloop(*x.args)
+                asynloop(x.obj)
         finally:
             state.should_stop = None
 
@@ -243,14 +253,14 @@ class test_asynloop:
         x.qos.value = 3
         x.hub.on_tick.add(x.closer(mod=2))
         x.hub.timer._queue = [1]
-        asynloop(*x.args)
+        asynloop(x.obj)
         x.qos.update.assert_not_called()
 
         x = X(self.app)
         x.qos.prev = 1
         x.qos.value = 6
         x.hub.on_tick.add(x.closer(mod=2))
-        asynloop(*x.args)
+        asynloop(x.obj)
         x.qos.update.assert_called_with()
         x.hub.fire_timers.assert_called_with(propagate=(socket.error,))
 
@@ -263,7 +273,7 @@ class test_asynloop:
         poller = x.hub.poller
         poller.poll.return_value = []
         with pytest.raises(socket.error):
-            asynloop(*x.args)
+            asynloop(x.obj)
         poller.poll.assert_called_with(33.37)
 
     def test_poll_readable(self):
@@ -274,7 +284,7 @@ class test_asynloop:
         poller = x.hub.poller
         poller.poll.return_value = [(6, READ)]
         with pytest.raises(socket.error):
-            asynloop(*x.args)
+            asynloop(x.obj)
         reader.assert_called_with(6)
         poller.poll.assert_called()
 
@@ -287,7 +297,7 @@ class test_asynloop:
         poller.poll.return_value = [(6, READ)]
         reader.side_effect = Empty()
         with pytest.raises(socket.error):
-            asynloop(*x.args)
+            asynloop(x.obj)
         reader.assert_called_with(6)
         poller.poll.assert_called()
 
@@ -299,7 +309,7 @@ class test_asynloop:
         poller = x.hub.poller
         poller.poll.return_value = [(6, WRITE)]
         with pytest.raises(socket.error):
-            asynloop(*x.args)
+            asynloop(x.obj)
         writer.assert_called_with(6)
         poller.poll.assert_called()
 
@@ -311,7 +321,7 @@ class test_asynloop:
         poller = x.hub.poller
         poller.poll.return_value = [(7, WRITE)]
         with pytest.raises(socket.error):
-            asynloop(*x.args)
+            asynloop(x.obj)
         poller.poll.assert_called()
 
     def test_poll_unknown_event(self):
@@ -322,7 +332,7 @@ class test_asynloop:
         poller = x.hub.poller
         poller.poll.return_value = [(6, 0)]
         with pytest.raises(socket.error):
-            asynloop(*x.args)
+            asynloop(x.obj)
         poller.poll.assert_called()
 
     def test_poll_keep_draining_disabled(self):
@@ -337,7 +347,7 @@ class test_asynloop:
         poller = x.hub.poller
         poll.return_value = [(6, 0)]
         with pytest.raises(socket.error):
-            asynloop(*x.args)
+            asynloop(x.obj)
         poller.poll.assert_called()
 
     def test_poll_err_writable(self):
@@ -348,7 +358,7 @@ class test_asynloop:
         poller = x.hub.poller
         poller.poll.return_value = [(6, ERR)]
         with pytest.raises(socket.error):
-            asynloop(*x.args)
+            asynloop(x.obj)
         writer.assert_called_with(6, 48)
         poller.poll.assert_called()
 
@@ -365,7 +375,7 @@ class test_asynloop:
         x.hub.on_tick.add(x.close_then_error(Mock(name='tick'), 2))
         x.hub.poller.poll.return_value = [(6, WRITE)]
         with pytest.raises(socket.error):
-            asynloop(*x.args)
+            asynloop(x.obj)
         assert gen.gi_frame.f_lasti != -1
         x.hub.remove.assert_not_called()
 
@@ -381,7 +391,7 @@ class test_asynloop:
         x.hub.poller.poll.return_value = [(6, WRITE)]
         x.hub.remove = Mock(name='hub.remove()')
         with pytest.raises(socket.error):
-            asynloop(*x.args)
+            asynloop(x.obj)
         assert gen.gi_frame is None
 
     def test_poll_write_generator_raises(self):
@@ -396,7 +406,7 @@ class test_asynloop:
         x.hub.on_tick.add(x.close_then_error(Mock(name='tick'), 2))
         x.hub.poller.poll.return_value = [(6, WRITE)]
         with pytest.raises(ValueError):
-            asynloop(*x.args)
+            asynloop(x.obj)
         assert gen.gi_frame is None
         x.hub.remove.assert_called_with(6)
 
@@ -408,7 +418,7 @@ class test_asynloop:
         poller = x.hub.poller
         poller.poll.return_value = [(6, ERR)]
         with pytest.raises(socket.error):
-            asynloop(*x.args)
+            asynloop(x.obj)
         reader.assert_called_with(6, 24)
         poller.poll.assert_called()
 
@@ -417,7 +427,7 @@ class test_asynloop:
         x.hub.readers = {6: Mock()}
         poller = x.hub.poller
         x.close_then_error(poller.poll, exc=ValueError)
-        asynloop(*x.args)
+        asynloop(x.obj)
         poller.poll.assert_called()
 
 
@@ -427,7 +437,7 @@ class test_synloop:
         x = X(self.app)
         x.timeout_then_error(x.connection.drain_events)
         with pytest.raises(socket.error):
-            synloop(*x.args)
+            synloop(x.obj)
         assert x.connection.drain_events.call_count == 2
 
     def test_updates_qos_when_changed(self):
@@ -436,19 +446,19 @@ class test_synloop:
         x.qos.value = 2
         x.timeout_then_error(x.connection.drain_events)
         with pytest.raises(socket.error):
-            synloop(*x.args)
+            synloop(x.obj)
         x.qos.update.assert_not_called()
 
         x.qos.value = 4
         x.timeout_then_error(x.connection.drain_events)
         with pytest.raises(socket.error):
-            synloop(*x.args)
+            synloop(x.obj)
         x.qos.update.assert_called_with()
 
     def test_ignores_socket_errors_when_closed(self):
         x = X(self.app)
         x.close_then_error(x.connection.drain_events)
-        assert synloop(*x.args) is None
+        assert synloop(x.obj) is None
 
 
 class test_quick_drain:

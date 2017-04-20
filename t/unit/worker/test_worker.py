@@ -256,7 +256,7 @@ class test_Consumer(ConsumerCase):
         c.connection.drain_events.side_effect = WorkerShutdown()
 
         with pytest.raises(WorkerShutdown):
-            c.loop(*c.loop_args())
+            c.loop(c.loop_args())
         assert c.task_consumer.on_message
         return c.task_consumer.on_message
 
@@ -310,7 +310,7 @@ class test_Consumer(ConsumerCase):
         c.connection = Connection(self.app.conf.broker_url)
         c.connection.obj = c
         c.qos = QoS(c.task_consumer.qos, 10)
-        c.loop(*c.loop_args())
+        c.loop(c.loop_args())
 
     def test_loop_when_socket_error(self):
 
@@ -327,11 +327,11 @@ class test_Consumer(ConsumerCase):
         c.connection.obj = c
         c.qos = QoS(c.task_consumer.qos, 10)
         with pytest.raises(socket.error):
-            c.loop(*c.loop_args())
+            c.loop(c.loop_args())
 
         c.blueprint.state = CLOSE
         c.connection = conn
-        c.loop(*c.loop_args())
+        c.loop(c.loop_args())
 
     def test_loop(self):
 
@@ -352,8 +352,8 @@ class test_Consumer(ConsumerCase):
         c.connection.get_heartbeat_interval = Mock(return_value=None)
         c.qos = QoS(c.task_consumer.qos, 10)
 
-        c.loop(*c.loop_args())
-        c.loop(*c.loop_args())
+        c.loop(c.loop_args())
+        c.loop(c.loop_args())
         assert c.task_consumer.consume.call_count
         c.task_consumer.qos.assert_called_with(prefetch_count=10)
         assert c.qos.value == 10

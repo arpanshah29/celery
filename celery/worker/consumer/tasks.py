@@ -17,6 +17,7 @@ class Tasks(bootsteps.StartStopStep):
 
     def __init__(self, c, **kwargs):
         c.task_consumer = c.qos = None
+        c.additional_task_consumers = []
         super(Tasks, self).__init__(c, **kwargs)
 
     def start(self, c):
@@ -32,31 +33,49 @@ class Tasks(bootsteps.StartStopStep):
         c.connection.default_channel.basic_qos(
             0, c.initial_prefetch_count, qos_global,
         )
+        for connection in c.additional_connections:
+            connection.default_channel.basic_qos(
+                0, c.initial_prefetch_count, qos_global
+            )
 
         c.task_consumer = c.app.amqp.TaskConsumer(
             c.connection, on_decode_error=c.on_decode_error,
         )
+        c.additional_task_consumers = [c.app.amqp.TaskConsumer(
+            connection, on_decode_error=c.on_decode_error,
+        ) for connection in c.additional_connections]
 
         def set_prefetch_count(prefetch_count):
-            return c.task_consumer.qos(
-                prefetch_count=prefetch_count,
-                apply_global=qos_global,
-            )
+            c.task_consumer.qos(prefetch_count=prefetch_count,
+                                apply_global=qos_global)
+            for task_consumer in c.additional_task_consumers:
+                task_consumer.qos(prefetch_count=prefetch_count,
+                                  apply_global=qos_global)
         c.qos = QoS(set_prefetch_count, c.initial_prefetch_count)
 
     def stop(self, c):
-        """Stop task consumer."""
+        """Stop task consumers."""
         if c.task_consumer:
             debug('Canceling task consumer...')
             ignore_errors(c, c.task_consumer.cancel)
+
+        # Stop additional task consumers
+
+        debug("Cancelling additional task consumers...")
+        for task_consumer in c.additional_task_consumers:
+            ignore_errors(c, task_consumer.cancel)
 
     def shutdown(self, c):
         """Shutdown task consumer."""
         if c.task_consumer:
             self.stop(c)
-            debug('Closing consumer channel...')
+            debug('Closing primary consumer channel...')
             ignore_errors(c, c.task_consumer.close)
             c.task_consumer = None
+        for task_consumer in c.additional_task_consumers:
+            debug('Closing additional consumer channels...')
+            ignore_errors(c, task_consumer.close)
+        c.additional_task_consumers = []
 
     def info(self, c):
         """Return task consumer info."""

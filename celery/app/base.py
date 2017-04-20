@@ -231,7 +231,8 @@ class Celery(object):
 
     def __init__(self, main=None, loader=None, backend=None,
                  amqp=None, events=None, log=None, control=None,
-                 set_as_current=True, tasks=None, broker=None, include=None,
+                 set_as_current=True, tasks=None, broker=None,
+                 additional_brokers=[], include=None,
                  changes=None, config_source=None, fixups=None, task_cls=None,
                  autofinalize=True, namespace=None, strict_typing=True,
                  **kwargs):
@@ -274,6 +275,7 @@ class Celery(object):
         self._preconf_set_by_auto = set()
         self.__autoset('broker_url', broker)
         self.__autoset('result_backend', backend)
+        self.__autoset('additional_brokers', additional_brokers)
         self.__autoset('include', include)
         self._conf = Settings(
             PendingConfiguration(

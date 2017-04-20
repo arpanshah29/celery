@@ -32,21 +32,25 @@ def _enable_amqheartbeats(timer, connection, rate=2.0):
             timer.call_repeatedly(heartbeat / rate, tick, (rate,))
 
 
-def asynloop(obj, connection, consumer, blueprint, hub, qos,
-             heartbeat, clock, hbrate=2.0):
+def asynloop(obj):
     """Non-blocking event loop."""
     RUN = bootsteps.RUN
-    update_qos = qos.update
-    errors = connection.connection_errors
+    update_qos = obj.qos.update
+    errors = obj.connection.connection_errors
 
     on_task_received = obj.create_task_handler()
 
-    _enable_amqheartbeats(hub.timer, connection, rate=hbrate)
+    _enable_amqheartbeats(obj.hub.timer, obj.connection,
+                          rate=obj.amqheartbeat_rate)
 
-    consumer.on_message = on_task_received
-    obj.controller.register_with_event_loop(hub)
-    obj.register_with_event_loop(hub)
-    consumer.consume()
+    obj.task_consumer.on_message = on_task_received
+    for additional_task_consumer in obj.additional_task_consumers:
+        additional_task_consumer.on_message = on_task_received
+    obj.controller.register_with_event_loop(obj.hub)
+    obj.register_with_event_loop(obj.hub)
+    obj.task_consumer.consume()
+    for additional_task_consumer in obj.additional_task_consumers:
+        additional_task_consumer.consume()
     obj.on_ready()
 
     # did_start_ok will verify that pool processes were able to start,
@@ -58,16 +62,18 @@ def asynloop(obj, connection, consumer, blueprint, hub, qos,
     # consumer.consume() may have prefetched up to our
     # limit - drain an event so we're in a clean state
     # prior to starting our event loop.
-    if connection.transport.driver_type == 'amqp':
-        hub.call_soon(_quick_drain, connection)
+    if obj.connection.transport.driver_type == 'amqp':
+        obj.hub.call_soon(_quick_drain, obj.connection)
+    for connection in obj.additional_connections:
+        obj.hub.call_soon(_quick_drain, connection)
 
     # FIXME: Use loop.run_forever
     # Tried and works, but no time to test properly before release.
-    hub.propagate_errors = errors
-    loop = hub.create_loop()
+    obj.hub.propagate_errors = errors
+    loop = obj.hub.create_loop()
 
     try:
-        while blueprint.state == RUN and obj.connection:
+        while obj.blueprint.state == RUN and obj.connection:
             # shutdown if signal handlers told us to.
             should_stop, should_terminate = (
                 state.should_stop, state.should_terminate,
@@ -81,43 +87,43 @@ def asynloop(obj, connection, consumer, blueprint, hub, qos,
             # We only update QoS when there's no more messages to read.
             # This groups together qos calls, and makes sure that remote
             # control commands will be prioritized over task messages.
-            if qos.prev != qos.value:
+            if obj.qos.prev != obj.qos.value:
                 update_qos()
 
             try:
                 next(loop)
             except StopIteration:
-                loop = hub.create_loop()
+                loop = obj.hub.create_loop()
     finally:
         try:
-            hub.reset()
+            obj.hub.reset()
         except Exception as exc:  # pylint: disable=broad-except
             logger.exception(
                 'Error cleaning up after event loop: %r', exc)
 
 
-def synloop(obj, connection, consumer, blueprint, hub, qos,
-            heartbeat, clock, hbrate=2.0, **kwargs):
+def synloop(obj):
     """Fallback blocking event loop for transports that doesn't support AIO."""
     RUN = bootsteps.RUN
     on_task_received = obj.create_task_handler()
     perform_pending_operations = obj.perform_pending_operations
     if getattr(obj.pool, 'is_green', False):
-        _enable_amqheartbeats(obj.timer, connection, rate=hbrate)
-    consumer.on_message = on_task_received
-    consumer.consume()
+        _enable_amqheartbeats(obj.timer, obj.connection,
+                              rate=obj.amqheartbeat_rate)
+    obj.task_consumer.on_message = on_task_received
+    obj.task_consumer.consume()
 
     obj.on_ready()
 
-    while blueprint.state == RUN and obj.connection:
+    while obj.blueprint.state == RUN and obj.connection:
         state.maybe_shutdown()
-        if qos.prev != qos.value:
-            qos.update()
+        if obj.qos.prev != obj.qos.value:
+            obj.qos.update()
         try:
             perform_pending_operations()
-            connection.drain_events(timeout=2.0)
+            obj.connection.drain_events(timeout=2.0)
         except socket.timeout:
             pass
         except socket.error:
-            if blueprint.state == RUN:
+            if obj.blueprint.state == RUN:
                 raise

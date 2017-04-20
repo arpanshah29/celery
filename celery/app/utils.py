@@ -106,6 +106,13 @@ class Settings(ConfigurationView):
         )
 
     @property
+    def additional_brokers(self):
+        environ_var = os.environ.get('CELERY_ADDITIONAL_BROKER_URLS')
+        if environ_var:
+            return environ_var.split(",")
+        return (self.get('additional_brokers', []))
+
+    @property
     def task_default_exchange(self):
         return self.first(
             'task_default_exchange',

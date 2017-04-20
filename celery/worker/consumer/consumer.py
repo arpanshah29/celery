@@ -363,9 +363,7 @@ class Consumer(object):
             callback(self)
 
     def loop_args(self):
-        return (self, self.connection, self.task_consumer,
-                self.blueprint, self.hub, self.qos, self.amqheartbeat,
-                self.app.clock, self.amqheartbeat_rate)
+        return self
 
     def on_decode_error(self, message, exc):
         """Callback called if an error occurs while decoding a message.
@@ -405,8 +403,15 @@ class Consumer(object):
         :setting:`broker_connection_retry` setting is enabled
         """
         conn = self.connection_for_read(heartbeat=self.amqheartbeat)
+        self.additional_connections = [
+            self.app.connection_for_read(conn_string,
+                                         heartbeat=self.amqheartbeat) for
+            conn_string in self.app.conf.additional_brokers]
         if self.hub:
             conn.transport.register_with_event_loop(conn.connection, self.hub)
+            for connection in self.additional_connections:
+                conn.transport.register_with_event_loop(connection.connection,
+                                                        self.hub)
         return conn
 
     def connection_for_read(self, heartbeat=None):
@@ -593,7 +598,7 @@ class Evloop(bootsteps.StartStopStep):
 
     def start(self, c):
         self.patch_all(c)
-        c.loop(*c.loop_args())
+        c.loop(c.loop_args())
 
     def patch_all(self, c):
         c.qos._mutex = DummyLock()
