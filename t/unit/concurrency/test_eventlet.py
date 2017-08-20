@@ -17,6 +17,7 @@ eventlet_modules = (
 )
 
 
+@skip.unless_module('eventlet')
 @skip.if_pypy()
 class EventletCase:
 
